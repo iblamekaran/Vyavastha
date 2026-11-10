@@ -17,7 +17,8 @@ import {
   Layers,
   MapPin,
   Clock,
-  X
+  X,
+  Radio
 } from 'lucide-react';
 import './App.css';
 
@@ -33,6 +34,15 @@ const SUBJECT_COLORS = {
 
 function getSubjectBadgeStyle(code) {
   return SUBJECT_COLORS[code] || { bg: '#f1f5f9', text: '#475569', border: '#cbd5e1' };
+}
+
+async function safeJson(res) {
+  try {
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { error: `HTTP ${res.status}: Backend service unavailable on port 8080.` };
+  }
 }
 
 export default function App() {
@@ -58,7 +68,7 @@ export default function App() {
   const [seatSearch, setSeatSearch] = useState('');
 
   // Modals
-  const [modalType, setModalType] = useState(null); // 'student', 'room', 'exam', 'invigilator'
+  const [modalType, setModalType] = useState(null);
   const [studentForm, setStudentForm] = useState({ rollNo: '', name: '', subjectCode: '' });
   const [roomForm, setRoomForm] = useState({ roomName: '', rows: '', cols: '' });
   const [examForm, setExamForm] = useState({ subjectCode: '', examDate: '2026-12-10', slot: 'MORNING' });
@@ -67,7 +77,7 @@ export default function App() {
   // Show Toast
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 4500);
   };
 
   // Check Health
@@ -76,11 +86,14 @@ export default function App() {
       const res = await fetch(`${API_BASE}/health`);
       if (res.ok) {
         setApiOnline(true);
+        return true;
       } else {
         setApiOnline(false);
+        return false;
       }
     } catch {
       setApiOnline(false);
+      return false;
     }
   };
 
@@ -88,7 +101,12 @@ export default function App() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      await checkHealth();
+      const isOnline = await checkHealth();
+      if (!isOnline) {
+        setLoading(false);
+        return;
+      }
+
       const [sRes, rRes, eRes, iRes] = await Promise.all([
         fetch(`${API_BASE}/students`),
         fetch(`${API_BASE}/rooms`),
@@ -96,13 +114,13 @@ export default function App() {
         fetch(`${API_BASE}/invigilators`)
       ]);
 
-      if (sRes.ok) setStudents(await sRes.json());
-      if (rRes.ok) setRooms(await rRes.json());
-      if (eRes.ok) setExams(await eRes.json());
-      if (iRes.ok) setInvigilators(await iRes.json());
+      if (sRes.ok) setStudents(await safeJson(sRes));
+      if (rRes.ok) setRooms(await safeJson(rRes));
+      if (eRes.ok) setExams(await safeJson(eRes));
+      if (iRes.ok) setInvigilators(await safeJson(iRes));
     } catch (err) {
       console.error(err);
-      showToast('Failed to connect to Java API server. Ensure ApiServer is running on port 8080.', 'error');
+      showToast('Could not reach Java backend server. Ensure ApiServer is running on port 8080.', 'error');
     } finally {
       setLoading(false);
     }
@@ -113,7 +131,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/allocations?date=${date}&slot=${slot}`);
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJson(res);
         setStructuredAllocations(data);
       } else {
         setStructuredAllocations(null);
@@ -121,8 +139,8 @@ export default function App() {
 
       const chartRes = await fetch(`${API_BASE}/reports/chart?date=${date}&slot=${slot}`);
       if (chartRes.ok) {
-        const cData = await chartRes.json();
-        setChartText(cData.chart);
+        const cData = await safeJson(chartRes);
+        setChartText(cData.chart || '');
       } else {
         setChartText('');
       }
@@ -134,18 +152,24 @@ export default function App() {
 
   useEffect(() => {
     loadAllData();
-    const interval = setInterval(checkHealth, 5000);
+    const interval = setInterval(checkHealth, 4000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (apiOnline) {
+      loadAllData();
       loadAllocations();
     }
   }, [apiOnline, selectedDate, selectedSlot]);
 
   // Run Allocation
   const handleRunAllocation = async () => {
+    if (!apiOnline) {
+      showToast('Cannot run: Java API server is offline. Please start Main or ApiServer in IntelliJ first.', 'error');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/allocate`, {
@@ -153,7 +177,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date: selectedDate, slot: selectedSlot })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         showToast(data.error || 'Allocation failed', 'error');
       } else {
@@ -171,6 +195,11 @@ export default function App() {
 
   // Clear Allocation
   const handleClearAllocation = async () => {
+    if (!apiOnline) {
+      showToast('Java API server is offline.', 'error');
+      return;
+    }
+
     if (!window.confirm(`Clear seating allocation for ${selectedDate} (${selectedSlot})?`)) return;
     try {
       const res = await fetch(`${API_BASE}/allocate?date=${selectedDate}&slot=${selectedSlot}`, {
@@ -182,7 +211,7 @@ export default function App() {
         setStructuredAllocations(null);
         setChartText('');
       } else {
-        const data = await res.json();
+        const data = await safeJson(res);
         showToast(data.error || 'Failed to clear session', 'error');
       }
     } catch (err) {
@@ -208,7 +237,7 @@ export default function App() {
           subjectCode: studentForm.subjectCode
         })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         showToast(data.error || 'Failed to add student', 'error');
       } else {
@@ -249,7 +278,7 @@ export default function App() {
           cols: parseInt(roomForm.cols, 10)
         })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         showToast(data.error || 'Failed to add room', 'error');
       } else {
@@ -286,7 +315,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(examForm)
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         showToast(data.error || 'Failed to add exam', 'error');
       } else {
@@ -323,7 +352,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(invigilatorForm)
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         showToast(data.error || 'Failed to add invigilator', 'error');
       } else {
@@ -388,7 +417,7 @@ export default function App() {
         <div className="header-right">
           <div className={`status-pill ${apiOnline ? 'online' : 'offline'}`}>
             <span className={`status-dot ${apiOnline ? 'online' : 'offline'}`}></span>
-            <span>{apiOnline ? 'Java REST API Online (:8080)' : 'API Disconnected'}</span>
+            <span>{apiOnline ? 'Java Backend Online (:8080)' : 'Backend Disconnected'}</span>
           </div>
 
           <button className="btn btn-secondary btn-sm" onClick={loadAllData} title="Refresh All Data">
@@ -397,6 +426,34 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Offline Alert Warning Banner */}
+      {!apiOnline && (
+        <div style={{
+          background: '#fef2f2',
+          borderBottom: '1px solid #fecaca',
+          padding: '0.85rem 1.75rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          color: '#991b1b',
+          fontSize: '0.875rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <AlertTriangle size={20} color="#dc2626" />
+            <div>
+              <strong>Java API Backend is not running:</strong> The web UI cannot reach <code>http://localhost:8080</code>.
+              <span style={{ marginLeft: '0.4rem', opacity: 0.9 }}>
+                In IntelliJ, run <strong>Main</strong> or <strong>ApiServer</strong>, or run <code>java -cp "out/production/Vyavastha;lib/mysql-connector-j.jar" api.ApiServer</code> in terminal.
+              </span>
+            </div>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={loadAllData}>
+            <RefreshCw size={14} />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      )}
 
       {/* Main Navigation Tabs */}
       <nav className="nav-bar">
@@ -616,7 +673,7 @@ export default function App() {
                       }} 
                     />
                   </div>
-                  <p style={{ fontSize: '0.78rem', color: varCss('--text-muted'), marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '0.5rem' }}>
                     {students.length > totalCapacity 
                       ? '⚠️ Warning: Insufficient seats. Add more rooms before running allocation.' 
                       : `✓ Capacity headroom: ${totalCapacity - students.length} vacant seats.`}
@@ -1406,8 +1463,4 @@ export default function App() {
 
     </div>
   );
-}
-
-function varCss(v) {
-  return `var(${v})`;
 }
