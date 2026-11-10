@@ -1,6 +1,7 @@
 package api; 
 
-import com.sun.net.httpserver.HttpExchange; 
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler; 
 import com.sun.net.httpserver.HttpServer; 
 import exception.AllocationException; 
@@ -56,14 +57,14 @@ public class ApiServer {
         server = HttpServer.create(new InetSocketAddress(port), 0); 
         
         // API Contexts
-        server.createContext("/api/health", exchange -> { 
-            addCorsHeaders(exchange); 
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { 
-                exchange.sendResponseHeaders(204, -1); 
-                return; 
-            } 
-            sendJson(exchange, 200, "{\"status\":\"ok\",\"service\":\"Vyavastha API\"}"); 
-        }); 
+        HttpContext context = server.createContext("/api/health", exchange -> {
+            addCorsHeaders(exchange);
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            sendJson(exchange, 200, "{\"status\":\"ok\",\"service\":\"Vyavastha API\"}");
+        });
 
         server.createContext("/api/students", new StudentsHandler()); 
         server.createContext("/api/rooms", new RoomsHandler()); 
