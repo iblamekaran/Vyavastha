@@ -1,0 +1,6 @@
+out/
+.idea/
+*.class
+*.iml
+reports/
+config.properties
